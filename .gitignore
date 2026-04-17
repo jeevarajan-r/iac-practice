@@ -1,3 +1,4 @@
 /example
 .terraform*
 */.venv
+*.env

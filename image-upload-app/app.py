@@ -9,8 +9,13 @@ app.secret_key = "very-secret-key"
 USERNAME = "admin"
 PASSWORD = "password123"
 
-S3_BUCKET = "your-s3-bucket-name"
-S3_REGION = "ap-south-1"
+
+S3_BUCKET = os.environ.get("S3_BUCKET","")
+S3_REGION = os.environ.get("AWS_REGION","")
+
+if not S3_BUCKET or not S3_REGION:
+    raise Exception("S3_BUCKET or AWS_REGION not set")
+
 
 s3 = boto3.client("s3", region_name=S3_REGION)
 
