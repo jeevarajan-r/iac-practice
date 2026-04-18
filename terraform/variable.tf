@@ -9,3 +9,27 @@ variable "instance_type" {
     type = string
     default = "t2.micro"  
 }
+
+variable "github_url" {
+    description = "Github URL to clone the repository"
+    type = string
+    default = "https://github.com/jeevarajan-r/iac-practice.git"
+}
+
+variable "app_port" {
+    description = "Port number for the application"
+    type = number
+    default = 5000  
+}
+
+variable "ssh_key_name" {
+    description = "Name of the SSH key pair"
+    type = string
+    default = "app-deploy-key"
+}
+
+variable "ssh_key_path" {
+    description = "Path to the SSH private key"
+    type = string
+    default = "~/.ssh/id_rsa"  
+}
