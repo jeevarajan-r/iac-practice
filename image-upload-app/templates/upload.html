@@ -1,11 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload | Image Vault</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
 <body>
-  <h2>Upload Image</h2>
-  <form method="post" enctype="multipart/form-data">
-    <input type="file" name="image" />
-    <button type="submit">Upload</button>
-  </form>
-  <a href="/logout">Logout</a>
+    <div class="container">
+        <div class="glass-card">
+            <h2>Secure Upload</h2>
+            <form method="post" enctype="multipart/form-data">
+                <div class="form-group">
+                    <input type="file" name="image" required accept="image/*">
+                </div>
+                <button type="submit">Upload to S3</button>
+            </form>
+            <a href="/logout" class="logout-link">Sign Out</a>
+        </div>
+    </div>
 </body>
 </html>

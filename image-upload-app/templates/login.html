@@ -1,11 +1,25 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Image Vault</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
 <body>
-  <h2>Login</h2>
-  <form method="post">
-    <input name="username" placeholder="Username" />
-    <input name="password" type="password" placeholder="Password" />
-    <button type="submit">Login</button>
-  </form>
+    <div class="container">
+        <div class="glass-card">
+            <h2>Image Vault</h2>
+            <form method="post">
+                <div class="form-group">
+                    <input name="username" type="text" placeholder="Username" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <input name="password" type="password" placeholder="Password" required>
+                </div>
+                <button type="submit">Sign In</button>
+            </form>
+        </div>
+    </div>
 </body>
 </html>
