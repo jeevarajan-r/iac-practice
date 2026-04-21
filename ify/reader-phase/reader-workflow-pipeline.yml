@@ -1,0 +1,55 @@
+name: Deploy on Self-Hosted Runner
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build & Run Docker Compose
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Ensure Docker is installed
+        run: |
+          if ! command -v docker &> /dev/null; then
+            echo "Docker not found. Installing..."
+            sudo apt-get update
+            sudo apt-get install -y ca-certificates curl
+            sudo install -m 0755 -d /etc/apt/keyrings
+            sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            sudo chmod a+r /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            sudo usermod -aG docker $USER
+          fi
+          sudo docker --version
+          sudo docker compose version
+
+      - name: Copy .env from host
+        run: |
+          cp /home/ubuntu/.env.example .env
+        
+      - name: Docker Compose Down
+        run: |
+          sudo docker compose down --remove-orphans
+
+      - name: Docker Compose Build
+        run: |
+          sudo docker compose build --no-cache
+
+      - name: Docker Compose Up
+        run: |
+          sudo docker compose up -d --force-recreate
+
+      - name: Cleanup Docker
+        run: |
+          sudo docker system prune -f

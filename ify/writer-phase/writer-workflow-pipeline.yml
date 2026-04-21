@@ -1,0 +1,313 @@
+name: Generate CPG with Joern (Java)
+
+# ============================================================
+# Pipeline-wide configuration
+# Edit the env block below to adapt this pipeline to a
+# different repository, Java source tree, or graph-DB target.
+# ============================================================
+env:
+  # --- fast-test shortcut (skips real source, uses a stub) ---
+  FAST_PIPELINE_TEST: "false"
+
+  # --- Java source ---
+  JAVA_SOURCE_PATH: "src/main/java"
+  JAVA_VERSION: "21"
+
+  # --- Joern output paths ---
+  CPG_BIN_PATH: "out/cpg.bin"
+  CPG_NEO4J_CSV_DIR: "out/neo4jcsv"
+  CPG_GRAPH_CSV_DIR: "out/graph"          # normalized graph CSV written here
+
+  # --- Conversion script (produces vertices.csv / edges.csv) ---
+  CPG_CONVERT_SCRIPT: "scripts/convert_joern_to_neptune_csv.py"
+
+  # --- Graph-DB target: neptune | neo4j ---
+  GRAPH_DB_TARGET: "neptune"
+
+  # --- Neptune / AWS (only used when GRAPH_DB_TARGET == neptune) ---
+  CPG_S3_BUCKET: "neptune-cpg-bucket"
+  CPG_S3_PREFIX: "cpg"
+  NEPTUNE_LAMBDA_FUNCTION: "trigger-neptune-loader-mb"
+  NEPTUNE_POLL_MAX_ATTEMPTS: "30"
+  NEPTUNE_POLL_SLEEP_SECONDS: "20"
+  NEPTUNE_POLL_MAX_CONSECUTIVE_FAILS: "3"  # abort if this many polls in a row yield no valid status
+
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: {}
+
+jobs:
+  joern-cpg:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Compute all derived runtime values once; subsequent steps just reference them.
+      - name: Set pipeline environment variables
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TIMESTAMP=$(date -u +'%Y%m%dT%H%M%SZ')
+          REPO_NAME="${{ github.event.repository.name }}"
+          COMMIT_SHA="${{ github.sha }}"
+
+          echo "CPG_TIMESTAMP=${TIMESTAMP}"                                         >> "$GITHUB_ENV"
+          echo "CPG_REPO_NAME=${REPO_NAME}"                                         >> "$GITHUB_ENV"
+          echo "CPG_COMMIT_SHA=${COMMIT_SHA}"                                       >> "$GITHUB_ENV"
+          # Full S3 key prefix for this run (no bucket, no trailing slash)
+          echo "CPG_S3_PATH=${CPG_S3_PREFIX}/${REPO_NAME}/${TIMESTAMP}_${COMMIT_SHA}" >> "$GITHUB_ENV"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create minimal Java source (fast test)
+        if: env.FAST_PIPELINE_TEST == 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p temp-src
+
+          cat > temp-src/Dummy.java << 'EOF'
+          public class Dummy {
+              public void hello() {
+                  System.out.println("Hello");
+              }
+          }
+          EOF
+
+          # Override source path so the Generate CPG step picks up the stub
+          echo "JAVA_SOURCE_PATH=temp-src" >> "$GITHUB_ENV"
+
+      - name: Install Joern
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p tools && cd tools
+
+          curl -L "https://github.com/joernio/joern/releases/latest/download/joern-cli.zip" -o joern-cli.zip
+          unzip -q joern-cli.zip
+
+          echo "${PWD}/joern-cli" >> "$GITHUB_PATH"
+
+          "${PWD}/joern-cli/joern" --version || true
+          "${PWD}/joern-cli/joern-parse" --help | head -n 5 || true
+
+      - name: Generate CPG
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$(dirname "${CPG_BIN_PATH}")"
+
+          joern-parse "${JAVA_SOURCE_PATH}" --language JAVASRC --output "${CPG_BIN_PATH}"
+
+          echo "== Output files ==";  ls -lh out
+          echo "== Disk usage ==";    du -h "${CPG_BIN_PATH}"
+
+      - name: Export CPG to Neo4j CSV
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # IMPORTANT: do NOT pre-create the output directory
+          joern-export "${CPG_BIN_PATH}" --out "${CPG_NEO4J_CSV_DIR}" --repr all --format neo4jcsv
+
+      - name: Convert Neo4j CSV to graph CSV
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 --version
+          mkdir -p "${CPG_GRAPH_CSV_DIR}"
+          python3 "${CPG_CONVERT_SCRIPT}" "${CPG_NEO4J_CSV_DIR}" "${CPG_GRAPH_CSV_DIR}"
+
+      - name: Sanity-check graph CSV outputs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ls -lh out
+          ls -lh "${CPG_NEO4J_CSV_DIR}" | head -n 50 || true
+          ls -lh "${CPG_GRAPH_CSV_DIR}"
+          head -n 3 "${CPG_GRAPH_CSV_DIR}/vertices.csv"
+          head -n 3 "${CPG_GRAPH_CSV_DIR}/edges.csv"
+
+      - name: Upload CPG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: joern-cpg-${{ github.sha }}
+          path: ${{ env.CPG_BIN_PATH }}
+          retention-days: 7
+
+      - name: Upload graph CSV artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: graph-csv-${{ github.sha }}
+          path: |
+            ${{ env.CPG_GRAPH_CSV_DIR }}/vertices.csv
+            ${{ env.CPG_GRAPH_CSV_DIR }}/edges.csv
+          retention-days: 7
+
+      # ── Neptune path ─────────────────────────────────────────────────────────
+      # All steps below are skipped when GRAPH_DB_TARGET != 'neptune'.
+      # To target Neo4j instead, set GRAPH_DB_TARGET: "neo4j" above and add
+      # equivalent steps guarded by: if: env.GRAPH_DB_TARGET == 'neo4j'
+
+      - name: Configure AWS credentials
+        if: env.GRAPH_DB_TARGET == 'neptune'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          aws configure set aws_access_key_id     "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          aws configure set region                "${{ secrets.AWS_REGION }}"
+          
+      - name: Fast reset Neptune cluster
+        if: env.GRAPH_DB_TARGET == 'neptune' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euxo pipefail
+      
+          NEPTUNE_ENDPOINT="${{ secrets.NEPTUNE_ENDPOINT }}"
+          AWS_REGION="${{ secrets.AWS_REGION }}"
+      
+          TOKEN=$(aws neptunedata execute-fast-reset \
+            --action initiateDatabaseReset \
+            --endpoint-url "${NEPTUNE_ENDPOINT}" \
+            --region "${AWS_REGION}" \
+            --output json \
+            | jq -r '.payload.token')
+      
+          aws neptunedata execute-fast-reset \
+            --action performDatabaseReset \
+            --token "${TOKEN}" \
+            --endpoint-url "${NEPTUNE_ENDPOINT}" \
+            --region "${AWS_REGION}" \
+            --output json
+
+
+      - name: Upload graph CSVs to S3
+        if: env.GRAPH_DB_TARGET == 'neptune'
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          S3_TARGET="s3://${CPG_S3_BUCKET}/${CPG_S3_PATH}"
+          echo "Uploading graph CSVs to ${S3_TARGET}"
+
+          aws s3 cp "${CPG_GRAPH_CSV_DIR}/vertices.csv" "${S3_TARGET}/vertices.csv"
+          aws s3 cp "${CPG_GRAPH_CSV_DIR}/edges.csv"    "${S3_TARGET}/edges.csv"
+
+          echo "S3 upload complete"
+
+      - name: Verify files in S3
+        if: env.GRAPH_DB_TARGET == 'neptune'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          aws s3 ls "s3://${CPG_S3_BUCKET}/${CPG_S3_PATH}/"
+
+      - name: Trigger Neptune bulk loader (via Lambda)
+        if: env.GRAPH_DB_TARGET == 'neptune' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          S3_SOURCE="s3://${CPG_S3_BUCKET}/${CPG_S3_PATH}/"
+          echo "Invoking Lambda ${NEPTUNE_LAMBDA_FUNCTION} with source: ${S3_SOURCE}"
+
+          aws lambda invoke \
+            --function-name "${NEPTUNE_LAMBDA_FUNCTION}" \
+            --region "${{ secrets.AWS_REGION }}" \
+            --cli-binary-format raw-in-base64-out \
+            --payload "{\"s3_source\":\"${S3_SOURCE}\"}" \
+            response.json > trigger-invoke-meta.json
+
+          FUNCTION_ERROR=$(python3 -c 'import json; print(json.load(open("trigger-invoke-meta.json")).get("FunctionError", ""))')
+          if [[ -n "${FUNCTION_ERROR}" ]]; then
+            echo "Lambda returned FunctionError=${FUNCTION_ERROR}"
+            cat response.json
+            exit 1
+          fi
+
+          echo "Lambda response:"
+          cat response.json
+
+          LOAD_ID=$(python3 -c 'import json; print(json.load(open("response.json")).get("loadId", ""))')
+          if [[ -z "${LOAD_ID}" ]]; then
+            echo "Failed to extract loadId from response.json"
+            exit 1
+          fi
+
+          echo "NEPTUNE_LOAD_ID=${LOAD_ID}" >> "$GITHUB_ENV"
+
+      - name: Poll Neptune bulk loader status (via Lambda)
+        if: env.GRAPH_DB_TARGET == 'neptune' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          consecutive_fails=0
+
+          for ((i=1; i<=${NEPTUNE_POLL_MAX_ATTEMPTS}; i++)); do
+            echo "Polling Neptune loader status: attempt ${i}/${NEPTUNE_POLL_MAX_ATTEMPTS} for loadId=${NEPTUNE_LOAD_ID}"
+
+            aws lambda invoke \
+              --function-name "${NEPTUNE_LAMBDA_FUNCTION}" \
+              --region "${{ secrets.AWS_REGION }}" \
+              --cli-binary-format raw-in-base64-out \
+              --payload "{\"action\":\"status\",\"load_id\":\"${NEPTUNE_LOAD_ID}\"}" \
+              status-response.json > invoke-meta.json
+
+            FUNCTION_ERROR=$(python3 -c 'import json; print(json.load(open("invoke-meta.json")).get("FunctionError", ""))')
+            if [[ -n "${FUNCTION_ERROR}" ]]; then
+              echo "Lambda returned FunctionError=${FUNCTION_ERROR}"
+              cat status-response.json
+              exit 1
+            fi
+
+            echo "Status response:"
+            cat status-response.json
+
+            STATUS=$(python3 -c 'import json; print(json.load(open("status-response.json")).get("status", "UNKNOWN"))')
+            IS_TERMINAL=$(python3 -c 'import json; print(str(json.load(open("status-response.json")).get("isTerminal", False)).lower())')
+            SUCCEEDED=$(python3 -c 'import json; print(str(json.load(open("status-response.json")).get("succeeded", False)).lower())')
+
+            # Short-circuit: count consecutive polls that returned no usable status
+            if [[ "${STATUS}" == "UNKNOWN" ]]; then
+              (( consecutive_fails++ )) || true
+              echo "Warning: status is UNKNOWN (consecutive_fails=${consecutive_fails}/${NEPTUNE_POLL_MAX_CONSECUTIVE_FAILS})"
+              if (( consecutive_fails >= NEPTUNE_POLL_MAX_CONSECUTIVE_FAILS )); then
+                echo "Aborting: ${consecutive_fails} consecutive polls returned no valid status"
+                exit 1
+              fi
+            else
+              consecutive_fails=0
+            fi
+
+            if [[ "${IS_TERMINAL}" == "true" ]]; then
+              if [[ "${SUCCEEDED}" == "true" ]]; then
+                echo "Neptune load completed successfully: ${NEPTUNE_LOAD_ID}"
+                exit 0
+              fi
+
+              echo "Neptune load finished in non-success state (${STATUS}): ${NEPTUNE_LOAD_ID}"
+              exit 1
+            fi
+
+            sleep "${NEPTUNE_POLL_SLEEP_SECONDS}"
+          done
+
+          echo "Timed out waiting for Neptune load completion: ${NEPTUNE_LOAD_ID}"
+          exit 1

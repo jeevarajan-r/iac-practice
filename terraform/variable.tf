@@ -8,6 +8,11 @@ variable "instance_type" {
     description = "The EC2 instance's type"
     type = string
     default = "t2.micro"  
+
+    validation {
+        condition     = contains(["t2.micro", "t3.micro"], var.instance_type)
+        error_message = "Only t2.micro and t3.micro are allowed for cost control."
+  }
 }
 
 variable "github_url" {
