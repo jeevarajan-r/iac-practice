@@ -1,3 +1,4 @@
+variable "project_name" { type = string }
 variable "vpc_id" { type = string }
 variable "public_subnet_id" { type = string }
 variable "chat_app_sg_id" { type = string }
@@ -26,7 +27,7 @@ resource "tls_private_key" "ify_key" {
 }
 
 resource "aws_key_pair" "ify_key" {
-  key_name   = "ify-chat-app-key"
+  key_name   = "${var.project_name}-chat-app-key"
   public_key = tls_private_key.ify_key.public_key_openssh
 }
 
@@ -81,7 +82,7 @@ resource "aws_instance" "app_runner" {
               EOF
 
   tags = {
-    Name = "ify-runner-app"
+    Name = "${var.project_name}-runner-app"
   }
 }
 

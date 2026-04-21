@@ -1,8 +1,10 @@
+variable "project_name" { type = string }
+
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags = { Name = "ify-shared-vpc" }
+  tags = { Name = "${var.project_name}-shared-vpc" }
 }
 
 data "aws_availability_zones" "available" {
@@ -12,7 +14,7 @@ data "aws_availability_zones" "available" {
 # Internet Gateway for the Public Subnet (EC2 Reader Phase)
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
-  tags = { Name = "ify-igw" }
+  tags = { Name = "${var.project_name}-igw" }
 }
 
 # Public Subnet for the EC2 UI
@@ -22,7 +24,7 @@ resource "aws_subnet" "public" {
   cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index)
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
-  tags = { Name = "ify-public-subnet-${count.index}" }
+  tags = { Name = "${var.project_name}-public-subnet-${count.index}" }
 }
 
 resource "aws_route_table" "public" {
@@ -31,7 +33,7 @@ resource "aws_route_table" "public" {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.main.id
   }
-  tags = { Name = "ify-public-rt" }
+  tags = { Name = "${var.project_name}-public-rt" }
 }
 
 resource "aws_route_table_association" "public" {
@@ -46,12 +48,12 @@ resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index + 2) # offset by 2 to avoid collision
   availability_zone = data.aws_availability_zones.available.names[count.index]
-  tags = { Name = "ify-private-subnet-${count.index}" }
+  tags = { Name = "${var.project_name}-private-subnet-${count.index}" }
 }
 
 # Security Group for the Reader Chat App (EC2)
 resource "aws_security_group" "chat_app_sg" {
-  name        = "chat-app-sg"
+  name        = "${var.project_name}-chat-app-sg"
   description = "Allow inbound traffic to chat app on 8080 and SSH"
   vpc_id      = aws_vpc.main.id
 
@@ -75,12 +77,12 @@ resource "aws_security_group" "chat_app_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  tags = { Name = "ify-chat-app-sg" }
+  tags = { Name = "${var.project_name}-chat-app-sg" }
 }
 
 # Security Group for Neptune (Writer Phase)
 resource "aws_security_group" "neptune_sg" {
-  name        = "neptune-cluster-sg"
+  name        = "${var.project_name}-neptune-cluster-sg"
   description = "Security group for Neptune Cluster"
   vpc_id      = aws_vpc.main.id
 
@@ -106,7 +108,7 @@ resource "aws_security_group" "neptune_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  tags = { Name = "ify-neptune-sg" }
+  tags = { Name = "${var.project_name}-neptune-sg" }
 }
 
 # --- Outputs ---

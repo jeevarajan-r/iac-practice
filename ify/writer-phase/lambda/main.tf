@@ -1,3 +1,4 @@
+variable "project_name" { type = string }
 variable "lambda_role_arn" { type = string }
 variable "neptune_endpoint" { type = string }
 variable "loader_s3_bucket" { type = string }
@@ -6,13 +7,20 @@ variable "neptune_loader_iam_role_arn" { type = string }
 variable "subnet_ids" { type = list(string) }
 variable "security_group_ids" { type = list(string) }
 
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/../../lambda/lambda_function.py"
+  output_path = "${path.module}/cpg_loader.zip"
+}
+
 resource "aws_lambda_function" "cpg_loader" {
-  function_name = "ify-trigger-neptune-loader-mb"
+  function_name = "${var.project_name}-trigger-neptune-loader-mb"
   runtime       = "python3.11"
-  handler       = "lambda_function.lambda_handler" # File is lambda_function.py, handler is lambda_handler
+  handler       = "lambda_function.lambda_handler"
   role          = var.lambda_role_arn
   
-  filename      = "${path.root}/writer-phase/lambda/cpg_loader.zip"
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   vpc_config {
     subnet_ids         = var.subnet_ids

@@ -1,6 +1,8 @@
+variable "project_name" { type = string }
+
 # 1. IAM Role for Neptune Bulk Loader to read from S3
 resource "aws_iam_role" "neptune_s3_loader" {
-  name = "IfyNeptuneS3LoaderRole"
+  name = "${var.project_name}-NeptuneS3LoaderRole"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -13,7 +15,7 @@ resource "aws_iam_role" "neptune_s3_loader" {
 }
 
 resource "aws_iam_role_policy" "s3_access_for_neptune" {
-  name = "NeptuneS3Access"
+  name = "${var.project_name}-NeptuneS3Access"
   role = aws_iam_role.neptune_s3_loader.id
 
   policy = jsonencode({
@@ -29,7 +31,7 @@ resource "aws_iam_role_policy" "s3_access_for_neptune" {
 
 # 2. IAM Role for the Lambda Loader
 resource "aws_iam_role" "lambda_exec" {
-  name = "IfyNeptuneLoaderLambdaRole"
+  name = "${var.project_name}-NeptuneLoaderLambdaRole"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -42,7 +44,7 @@ resource "aws_iam_role" "lambda_exec" {
 }
 
 resource "aws_iam_role_policy" "lambda_policy" {
-  name = "LambdaNeptuneS3Policy"
+  name = "${var.project_name}-LambdaNeptuneS3Policy"
   role = aws_iam_role.lambda_exec.id
 
   policy = jsonencode({

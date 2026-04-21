@@ -1,8 +1,9 @@
+variable "project_name" { type = string }
 variable "ec2_instance_id" { type = string }
 variable "neptune_cluster_id" { type = string }
 
 resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = "ify-full-stack-monitoring"
+  dashboard_name = "${var.project_name}-full-stack-monitoring"
 
   dashboard_body = jsonencode({
     widgets = [
